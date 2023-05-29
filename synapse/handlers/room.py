@@ -922,6 +922,31 @@ class RoomCreationHandler:
         # override any attempt to set room versions via the creation_content
         creation_content["room_version"] = room_version.identifier
 
+        # If the user is trying to create an encrypted room and this is forbidden
+        # by the configured default_power_level_content_override, then reject the
+        # request before the room is created.
+        preset_name = config.get(
+            "preset",
+            RoomCreationPreset.PRIVATE_CHAT
+            if visibility == "private"
+            else RoomCreationPreset.PUBLIC_CHAT,
+        )
+        preset_config = self._presets_dict.get("preset_name", {})
+        if preset_config.get("encrypted", False) or any(
+            s.get("type", "") == "m.room.encryption" for s in raw_initial_state
+        ):
+            if self._default_power_level_content_override:
+                override = self._default_power_level_content_override.get(preset_name)
+                if override is not None:
+                    event_levels = override.get("events", {})
+                    room_admin_level = event_levels.get("m.room.power_levels", 100)
+                    encryption_level = event_levels.get("m.room.encryption", 100)
+                    if encryption_level > room_admin_level:
+                        raise SynapseError(
+                            403,
+                            f"You cannot create an encrypted room. Power level ({room_admin_level}) < required ({encryption_level}).",
+                        )
+
         (
             last_stream_id,
             last_sent_event_id,
